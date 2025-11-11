@@ -152,7 +152,7 @@ body {
   font-family: var(--font-family-primary);
   color: var(--main-color);
   line-height: 1.5;
-  background-color: var(--color-green200);
+  background-color: var(--color-gray200);
 }
 
 /* ================================
