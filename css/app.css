@@ -235,7 +235,7 @@ MAIN
   opacity: 0.35;
 }
 
-.form__label-input > span {
+.form__label-input .form__error-wrapper {
   display: flex;
   align-items: center;
   gap: 0.625rem;
