@@ -172,7 +172,13 @@ MAIN
 
 .logo {
   max-width: 5.4375rem;
+  /* aspect-ratio: 87/53; */
   justify-self: center;
+  padding-block-end: 40px;
+}
+
+.logo:not(:last-child) {
+  margin-block-end: clamp(1.875rem, 0.839rem + 5.179vw, 5.5rem);
 }
 
 .logo svg {
@@ -391,10 +397,6 @@ MAIN
   .form {
     grid-template-columns: 1fr;
   }
-
-    .logo:not(:last-child) {
-      margin-block-end: 20px;
-    }
 }
 
 @media (max-width: 34.375em){
