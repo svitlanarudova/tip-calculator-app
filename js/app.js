@@ -1,307 +1,286 @@
-// Wait for full page load
-window.addEventListener('load', pageLoaded);
+// main.js - The main application file
+import { CONFIG, ERROR_MESSAGES } from './config.js';
+import { debounce } from './helpers.js';
+import { validators } from './validators.js';
+import { errorHandler } from './errorHandler.js';
+import { createStateManager } from './stateManager.js';
+import { calculateSplit } from './calculator.js';
 
-function pageLoaded() {
+window.addEventListener('load', initApp);
 
-  // ========== STATE (Single source of truth) ==========
-  const state = {
+// ========================================
+// INITIALIZATION
+// ========================================
+function initApp() {
+  const elements = initializeDOM();
+  const stateManager = createStateManager({
     billAmount: 0,
     tipPercent: 0,
-    numberOfPeople: 1,
-  };
+    numberOfPeople: 1
+  });
 
-  // ========== DOM ELEMENTS ==========
-  const formSplitter = document.forms.splitter_form;
-  const billInput = formSplitter.bill_amount;
-  const tipPercentButtons = formSplitter.tip_percent; // NodeList of radios
-  const tipCustomInput = formSplitter.tip_custom;
-  const numberOfPeopleInput = formSplitter.people_count;
-  const tipAmountPersonOutput = document.querySelector('.result-form__value--amount');
-  const totalAmountPersonOutput = document.querySelector('.result-form__value--total');
-  const resetButton = formSplitter.reset_button;
-  const billError = document.querySelector('.error-bill');
-  const peopleError = document.querySelector('.error-num-people');
+  // Subscribing to state changes
+  stateManager.subscribe((state) => {
+    updateResults(elements, state);
+    updateResetButton(elements.resetButton, stateManager.shouldEnableReset());
+  });
 
-  // ========== CONSTANTS ==========
-  const MAX_BILL = 100000.00;
-  const MIN_BILL = 1.00;
-  const MIN_PEOPLE = 1;
-  const MAX_PEOPLE = 100;
-  const MIN_CUSTOM_TIP = 1;
-  const MAX_CUSTOM_TIP = 100;
-
-  // ========== INITIALIZATION ==========
-  setResetButtonState(false);
-  updateResults();
+  // Initial setup
+  updateResetButton(elements.resetButton, false);
+  updateResults(elements, stateManager.getState());
   document.documentElement.classList.add('loaded');
 
-  // ========== ERROR HELPERS ==========
+  // Event binding
+  attachEventListeners(elements, stateManager);
+}
 
-  // Show error message and add error class to input
-  function showError(inputElem, errorElem, message) {
-    if (inputElem) inputElem.classList.add('error');
-    if (errorElem) {
-      errorElem.textContent = message;
-      errorElem.style.visibility = 'visible';
-    }
-  }
+// ========================================
+// INITIALIZING THE DOM
+// ========================================
+function initializeDOM() {
+  const form = document.forms.splitter_form;
 
-  // Hide error message and remove error class
-  function hideError(inputElem, errorElem) {
-    if (inputElem) inputElem.classList.remove('error');
-    if (errorElem) {
-      errorElem.textContent = '';
-      errorElem.style.visibility = 'hidden';
-    }
-  }
+  return {
+    form,
+    billInput: form.bill_amount,
+    tipPercentButtons: form.tip_percent,
+    tipCustomInput: form.tip_custom,
+    numberOfPeopleInput: form.people_count,
+    tipAmountOutput: document.querySelector('.result-form__value--amount'),
+    totalAmountOutput: document.querySelector('.result-form__value--total'),
+    resetButton: form.reset_button,
+    billError: document.querySelector('.error-bill'),
+    peopleError: document.querySelector('.error-num-people')
+  };
+}
 
-  // ========== VALIDATION ==========
+// ========================================
+// LINKING EVENTS
+// ========================================
+function attachEventListeners(elements, stateManager) {
+  attachBillListeners(elements, stateManager);
+  attachPeopleListeners(elements, stateManager);
+  attachTipListeners(elements, stateManager);
+  attachResetListener(elements, stateManager);
+}
 
-  // Validate bill amount: returns { ok: boolean, value?: number, reason?: string }
-  function validateBillValueRaw(raw) {
-    const cleaned = String(raw).replace(/[^0-9.]/g, '');
-    const num = parseFloat(cleaned);
-    if (isNaN(num)) return { ok: false, reason: 'empty' };
-    if (num < MIN_BILL) return { ok: false, reason: 'min' };
-    if (num > MAX_BILL) return { ok: false, reason: 'max' };
-    return { ok: true, value: parseFloat(num.toFixed(2)) };
-  }
+// ========================================
+// ACCOUNT PROCESSORS
+// ========================================
+function attachBillListeners(elements, stateManager) {
+  const { billInput, billError } = elements;
 
-  // Validate number of people (integer)
-  function validatePeopleValueRaw(raw) {
-    const cleaned = String(raw).replace(/[^0-9]/g, '');
-    const num = parseInt(cleaned);
-    if (isNaN(num)) return { ok: false, reason: 'empty' };
-    if (num < MIN_PEOPLE) return { ok: false, reason: 'min' };
-    if (num > MAX_PEOPLE) return { ok: false, reason: 'max' };
-    return { ok: true, value: num };
-  }
-
-  // Validate custom tip percentage (1-100)
-  function validateCustomTipRaw(raw) {
-    const num = parseFloat(String(raw).replace(/[^\d.]/g, ''));
-    if (isNaN(num)) return { ok: false };
-    if (num < MIN_CUSTOM_TIP || num > MAX_CUSTOM_TIP) return { ok: false };
-    return { ok: true, value: Math.round(num) };
-  }
-
-  // ========== UI HELPERS ==========
-
-  // Enable/disable reset button
-  function setResetButtonState(enabled) {
-    resetButton.disabled = !enabled;
-    resetButton.classList.toggle('empty', !enabled);
-  }
-
-  // Clear custom tip input
-  function clearCustomInput() {
-    tipCustomInput.value = '';
-  }
-
-  // Uncheck all radio buttons
-  function uncheckAllRadios() {
-    Array.from(tipPercentButtons).forEach(btn => btn.checked = false);
-  }
-
-  // ========== CALCULATIONS ==========
-
-  // Calculate tip and total per person from state
-  function calculateValuesFromState() {
-    const b = state.billAmount || 0;
-    const p = state.numberOfPeople || 1;
-    const tipPct = state.tipPercent || 0;
-
-    if (!b || !p) return { tipPerPerson: 0, totalPerPerson: 0 };
-
-    const totalTip = (b * tipPct) / 100;
-    const tipPerPerson = totalTip / p;
-    const totalPerPerson = (b / p) + tipPerPerson;
-
-    return { tipPerPerson, totalPerPerson };
-  }
-
-  // Update DOM with calculated results
-  function updateResults() {
-    const { tipPerPerson, totalPerPerson } = calculateValuesFromState();
-    tipAmountPersonOutput.textContent = `$${(tipPerPerson || 0).toFixed(2)}`;
-    totalAmountPersonOutput.textContent = `$${(totalPerPerson || 0).toFixed(2)}`;
-  }
-
-  // ========== EVENT LISTENERS ==========
-
-  // BILL INPUT: Live validation while typing
-  billInput.addEventListener('input', (e) => {
-    // Input mask: allow only digits and dot
+  // Input with debounce for performance
+  billInput.addEventListener('input', debounce((e) => {
     e.target.value = e.target.value.replace(/[^0-9.]/g, '');
     const raw = e.target.value;
-
-    // Check for max overflow
     const num = parseFloat(raw);
-    if (!isNaN(num) && num > MAX_BILL) {
-      showError(billInput, billError, `(1–${MAX_BILL.toLocaleString()})`);
-      return; // Don't update state
-    }
 
-    // Full validation
-    const check = validateBillValueRaw(raw);
-    if (!check.ok) {
-      showError(billInput, billError, `(1-${MAX_BILL.toLocaleString()})`);
+    // Check for exceeding the maximum
+    if (!isNaN(num) && num > CONFIG.MAX_BILL) {
+      errorHandler.show(billInput, billError, ERROR_MESSAGES.bill);
       return;
-    } else {
-      hideError(billInput, billError);
-      state.billAmount = check.value;
-      setResetButtonState(true);
-      updateResults();
     }
-  });
 
-  // BILL INPUT: Normalize value on blur
+    const validation = validators.validateBillValueRaw(raw);
+
+    if (!validation.ok) {
+      errorHandler.show(billInput, billError, ERROR_MESSAGES.bill);
+      return;
+    }
+
+    errorHandler.hide(billInput, billError);
+    stateManager.setState({ billAmount: validation.value });
+  }, CONFIG.DEBOUNCE_DELAY));
+
+  // Blur for final processing
   billInput.addEventListener('blur', (e) => {
-    const check = validateBillValueRaw(e.target.value);
-    if (!check.ok || !e.target.value) {
+    const validation = validators.validateBillValueRaw(e.target.value);
+
+    if (!validation.ok || !e.target.value) {
       e.target.value = '';
-      state.billAmount = 0;
+      stateManager.setState({ billAmount: 0 });
     } else {
-      e.target.value = check.value.toFixed(2); // Format: "100.00"
-      state.billAmount = check.value;
+      e.target.value = validation.value.toFixed(2);
+      stateManager.setState({ billAmount: validation.value });
     }
-    hideError(billInput, billError);
-    setResetButtonState(state.billAmount > 0 || state.tipPercent > 0 || state.numberOfPeople > 1);
 
-    // Set default people count if empty
-    if (!numberOfPeopleInput.value || numberOfPeopleInput.value === '') {
-      numberOfPeopleInput.value = MIN_PEOPLE;
+    errorHandler.hide(billInput, billError);
+
+    // Set default for people if empty
+    if (!elements.numberOfPeopleInput.value) {
+      elements.numberOfPeopleInput.value = CONFIG.MIN_PEOPLE;
     }
-    updateResults();
   });
+}
 
-  // PEOPLE INPUT: Live validation
-  numberOfPeopleInput.addEventListener('input', (e) => {
+// ========================================
+// PEOPLE NUMBER PROCESSORS
+// ========================================
+function attachPeopleListeners(elements, stateManager) {
+  const { numberOfPeopleInput, peopleError } = elements;
+
+  numberOfPeopleInput.addEventListener('input', debounce((e) => {
     e.target.value = e.target.value.replace(/[^0-9]/g, '');
     const raw = e.target.value;
     const num = parseInt(raw);
 
-    if (!isNaN(num) && num > MAX_PEOPLE) {
-      showError(numberOfPeopleInput, peopleError, `(1–${MAX_PEOPLE})`);
+    if (!isNaN(num) && num > CONFIG.MAX_PEOPLE) {
+      errorHandler.show(numberOfPeopleInput, peopleError, ERROR_MESSAGES.people);
       return;
     }
 
-    const check = validatePeopleValueRaw(raw);
-    if (!check.ok) {
-      showError(numberOfPeopleInput, peopleError, `(1–${MAX_PEOPLE})`);
-      return;
-    } else {
-      hideError(numberOfPeopleInput, peopleError);
-      state.numberOfPeople = check.value;
-      setResetButtonState(true);
-      updateResults();
-    }
-  });
+    const validation = validators.validatePeopleValueRaw(raw);
 
-  // PEOPLE INPUT: Normalize on blur
+    if (!validation.ok) {
+      errorHandler.show(numberOfPeopleInput, peopleError, ERROR_MESSAGES.people);
+      return;
+    }
+
+    errorHandler.hide(numberOfPeopleInput, peopleError);
+    stateManager.setState({ numberOfPeople: validation.value });
+  }, CONFIG.DEBOUNCE_DELAY));
+
   numberOfPeopleInput.addEventListener('blur', (e) => {
-    const check = validatePeopleValueRaw(e.target.value);
-    if (!check.ok || !e.target.value) {
-      e.target.value = MIN_PEOPLE;
-      state.numberOfPeople = MIN_PEOPLE;
+    const validation = validators.validatePeopleValueRaw(e.target.value);
+
+    if (!validation.ok || !e.target.value) {
+      e.target.value = CONFIG.MIN_PEOPLE;
+      stateManager.setState({ numberOfPeople: CONFIG.MIN_PEOPLE });
     } else {
-      e.target.value = check.value;
-      state.numberOfPeople = check.value;
+      e.target.value = validation.value;
+      stateManager.setState({ numberOfPeople: validation.value });
     }
-    hideError(numberOfPeopleInput, peopleError);
-    setResetButtonState(state.billAmount > 0 || state.tipPercent > 0 || state.numberOfPeople > 1);
-    updateResults();
+
+    errorHandler.hide(numberOfPeopleInput, peopleError);
   });
+}
 
-  // TIP RADIOS: Handle keyboard navigation (Tab + Enter/Space)
-  // BUGFIX: Added focus handler for automatic selection on Tab
+// ========================================
+// TIP PROCESSORS
+// ========================================
+function attachTipListeners(elements, stateManager) {
+  const { tipPercentButtons, tipCustomInput } = elements;
+
+  // Handlers for each radio button
   Array.from(tipPercentButtons).forEach(btn => {
-
-    // 'change' event: fires on click or Enter/Space
+    // Change event (mouse click)
     btn.addEventListener('change', (e) => {
-      clearCustomInput();
+      clearCustomInput(tipCustomInput);
       const val = parseFloat(e.target.value);
-      state.tipPercent = Number.isFinite(val) ? val : 0;
-      setResetButtonState(true);
-      updateResults();
+      stateManager.setState({
+        tipPercent: Number.isFinite(val) ? val : 0
+      });
     });
 
-    // 'keydown' event: handle Enter/Space explicitly
+    // Keyboard support
     btn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         if (!btn.checked) {
           btn.checked = true;
-          clearCustomInput();
+          clearCustomInput(tipCustomInput);
           const val = parseFloat(btn.value);
-          state.tipPercent = Number.isFinite(val) ? val : 0;
-          setResetButtonState(true);
-          updateResults();
+          stateManager.setState({
+            tipPercent: Number.isFinite(val) ? val : 0
+          });
         }
       }
     });
 
-    // 'focus' event: auto-select on Tab navigation
+    // Auto-select on Tab
     btn.addEventListener('focus', (e) => {
       if (!btn.checked) {
         btn.checked = true;
-        clearCustomInput();
+        clearCustomInput(tipCustomInput);
         const val = parseFloat(btn.value);
-        state.tipPercent = Number.isFinite(val) ? val : 0;
-        setResetButtonState(true);
-        updateResults();
+        stateManager.setState({
+          tipPercent: Number.isFinite(val) ? val : 0
+        });
       }
     });
   });
 
-  // CUSTOM TIP: Live update while typing
+  // Custom tip input
   tipCustomInput.addEventListener('input', (e) => {
-    uncheckAllRadios();
-    const raw = e.target.value;
-    const validated = validateCustomTipRaw(raw);
+    uncheckAllRadios(tipPercentButtons);
+    const validation = validators.validateCustomTipRaw(e.target.value);
 
-    if (!validated.ok) {
-      state.tipPercent = 0;
-      updateResults();
+    if (!validation.ok) {
+      stateManager.setState({ tipPercent: 0 });
       return;
     }
-    state.tipPercent = validated.value;
-    setResetButtonState(true);
-    updateResults();
+
+    stateManager.setState({ tipPercent: validation.value });
   });
 
-  // CUSTOM TIP: Normalize on blur
-  // BUGFIX: Don't reset tipPercent if custom field is empty
   tipCustomInput.addEventListener('blur', (e) => {
-    // If empty - just clear field, DON'T touch state.tipPercent
     if (!e.target.value || e.target.value.trim() === '') {
       e.target.value = '';
-      updateResults();
-      return; // Exit without resetting state
+      return;
     }
 
-    // If something was entered - validate it
-    const validated = validateCustomTipRaw(e.target.value);
-    if (!validated.ok) {
+    const validation = validators.validateCustomTipRaw(e.target.value);
+
+    if (!validation.ok) {
       e.target.value = '';
-      state.tipPercent = 0; // Only reset if invalid input
+      stateManager.setState({ tipPercent: 0 });
     } else {
-      e.target.value = String(validated.value);
-      state.tipPercent = validated.value;
+      e.target.value = String(validation.value);
+      stateManager.setState({ tipPercent: validation.value });
     }
-    updateResults();
   });
+}
 
-  // RESET BUTTON: Clear form and state
-  resetButton.addEventListener('click', (e) => {
+// ========================================
+// RESET HANDLER
+// ========================================
+function attachResetListener(elements, stateManager) {
+  elements.resetButton.addEventListener('click', (e) => {
     e.preventDefault();
-    formSplitter.reset();
-    state.billAmount = 0;
-    state.tipPercent = 0;
-    state.numberOfPeople = 1;
-    hideError(billInput, billError);
-    hideError(numberOfPeopleInput, peopleError);
-    setResetButtonState(false);
-    updateResults();
+
+    elements.form.reset();
+    stateManager.reset({
+      billAmount: 0,
+      tipPercent: 0,
+      numberOfPeople: 1
+    });
+
+    errorHandler.hideAll([
+      { input: elements.billInput, error: elements.billError },
+      { input: elements.numberOfPeopleInput, error: elements.peopleError }
+    ]);
+
+    updateResetButton(elements.resetButton, false);
   });
+}
+
+// ========================================
+// UI UPDATE
+// ========================================
+function updateResults(elements, state) {
+  const { tipPerPerson, totalPerPerson } = calculateSplit(
+    state.billAmount,
+    state.tipPercent,
+    state.numberOfPeople
+  );
+
+  elements.tipAmountOutput.textContent = `$${tipPerPerson.toFixed(2)}`;
+  elements.totalAmountOutput.textContent = `$${totalPerPerson.toFixed(2)}`;
+}
+
+function updateResetButton(button, enabled) {
+  button.disabled = !enabled;
+  button.classList.toggle('empty', !enabled);
+}
+
+// ========================================
+// AUXILIARY FUNCTIONS
+// ========================================
+function clearCustomInput(input) {
+  input.value = '';
+}
+
+function uncheckAllRadios(radios) {
+  Array.from(radios).forEach(btn => btn.checked = false);
 }
