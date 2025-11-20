@@ -109,4 +109,33 @@ billInput.addEventListener('blur', (e) => {
 - **State management:** State is the single source of truth; DOM reflects state
 - **Accessibility matters:** Custom styling must not break keyboard navigation or screen readers
 
+# 🎯 Tip Calculator Refactoring
+## 📁 New Project Structure
+```js
+  ├── config.js          ← Constants and settings
+  ├── helpers.js         ← Debounce and sanitize utilities
+  ├── validators.js      ← Data validation
+  ├── errorHandler.js    ← Error management
+  ├── stateManager.js    ← State pattern implementation
+  ├── calculator.js      ← Business logic
+  └── main.js            ← Entry point
+```
+## ✨ Key Improvements
+
+**Modularization:** Split 280-line monolith into 7 focused modules
+**Validation** Extracted validation logic into reusable functions
+**Configuration:** Centralized all constants in config file
+**State Management** Implemented state manager with subscription pattern
+**Performance:** Added debouncing (300ms) and DOM query caching
+**Error Handling:** Unified error management system
+**Input Sanitization:** Reusable numeric/decimal sanitization helpers
+
+## 📈 Benefits
+
+> Easy to test individual modules  
+> Reusable code across projects  
+> Clear separation of concerns  
+> ES6 modules (import/export)  
+> Ready for unit testing  
+> Maintainable and scalable architecture  
 
